@@ -59,8 +59,13 @@ python main.py --keywords KEYWORD1 KEYWORD2 [KEYWORD3 ...] \
 ```bash
 python main.py \
     --keywords "openstack" "nova" "css" \
-    --proxies "37.120.172.84:80" "57.128.37.47:3128" \
+    --proxies "37.120.172.84:80" "119.156.195.171:3128" \
     --type Repositories \
+    --output results.json
+
+  python main.py \
+    --keywords "openstack" "nova" "css" \
+    --type Issues \
     --output results.json
 ```
 

@@ -7,7 +7,7 @@ async def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='GitHub Search Crawler')
     parser.add_argument('--keywords', nargs='+', required=True, help='List of search keywords')
-    parser.add_argument('--proxies', nargs='+', required=True, help='List of proxy servers (ip:port)')
+    parser.add_argument('--proxies', nargs='+', help='List of proxy servers (ip:port)')
     parser.add_argument('--type', choices=['Repositories', 'Issues', 'Wikis'], default='Repositories',
                       help='Type of search (default: Repositories)')
     parser.add_argument('--output', default='search_results.json',
@@ -17,8 +17,9 @@ async def main():
     
     # Initialize the crawler
     async with GitHubCrawler() as crawler:
-        # Set proxies
-        crawler.set_proxies(args.proxies)
+        # Set proxies if provided
+        if args.proxies:
+            crawler.set_proxies(args.proxies)
         
         # Perform search
         results = await crawler.search(

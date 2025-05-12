@@ -1,20 +1,26 @@
 import aiohttp
 from bs4 import BeautifulSoup, Tag
-from typing import List, Dict, Optional, Any, Set
+from typing import List, Dict, Optional, Any
 import asyncio
 import random
 import logging
 import re
-from urllib.parse import urljoin
-from datetime import datetime
-import pdb 
+from urllib.parse import urljoin, urlparse, urlencode, urlunparse
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 class GitHubCrawler:
     """A high-performance GitHub crawler that supports searching repositories, issues, and wikis."""
     
-    def __init__(self, base_url: str = "https://github.com", max_retries: int = 3, retry_delay: float = 1.0):
+    def __init__(
+        self,
+        base_url: str = "https://github.com",
+        max_retries: int = 3,
+        retry_delay: float = 1.0
+    ):
         """
         Initialize the GitHub crawler.
         
@@ -25,11 +31,16 @@ class GitHubCrawler:
         """
         self.base_url = base_url
         self.session = None
-        self.proxies = []
+        self.proxies = []  # List of available proxies
+        self.current_proxy = None  # Single proxy to use for all requests
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': (
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/91.0.4472.124 Safari/537.36'
+            )
         }
         # Status codes that should trigger a retry
         self.retry_status_codes = {429, 500, 502, 503, 504}
@@ -46,16 +57,42 @@ class GitHubCrawler:
     
     def set_proxies(self, proxies: List[str]):
         """
-        Set the list of proxies to use.
+        Set the list of proxies and select one proxy to use for all requests.
         
         Args:
             proxies (List[str]): List of proxy URLs in format 'ip:port'
         """
-        self.proxies = proxies
-    
-    def _get_random_proxy(self) -> Optional[str]:
-        """Get a random proxy from the list."""
-        return random.choice(self.proxies) if self.proxies else None
+        self.proxies = proxies.copy() if proxies else []
+        if self.proxies:
+            self.current_proxy = random.choice(self.proxies)
+            if not self.current_proxy.startswith(('http://', 'https://')):
+                self.current_proxy = f"http://{self.current_proxy}"
+            logger.info(f"Selected proxy for all requests: {self.current_proxy}")
+        else:
+            self.current_proxy = None
+
+    def _build_url(self, path: str, query_params: Optional[Dict[str, str]] = None) -> str:
+        """
+        Build a URL using proper URL construction.
+        
+        Args:
+            path (str): URL path
+            query_params (Optional[Dict[str, str]]): Query parameters
+            
+        Returns:
+            str: Properly constructed URL
+        """
+        parsed = urlparse(self.base_url)
+        path = path.lstrip('/')
+        query = urlencode(query_params) if query_params else ''
+        return urlunparse((
+            parsed.scheme,
+            parsed.netloc,
+            path,
+            '',
+            query,
+            ''
+        ))
 
     async def _fetch_with_retry(self, url: str, proxy: Optional[str] = None) -> Optional[str]:
         """
@@ -63,113 +100,116 @@ class GitHubCrawler:
         
         Args:
             url (str): URL to fetch
-            proxy (Optional[str]): Proxy URL to use
-            
+            proxy (Optional[str]): Not used, kept for compatibility
         Returns:
             Optional[str]: HTML content or None if all retries fail
         """
         if not self.session:
-            self.session = aiohttp.ClientSession(headers=self.headers)
+
             
+            timeout = aiohttp.ClientTimeout(
+                total=60,
+                connect=30,
+                sock_read=30
+            )
+            
+            self.session = aiohttp.ClientSession(
+                headers=self.headers,
+                timeout=timeout
+            )
+        
         retry_count = 0
         delay = self.retry_delay
-
+        
         while retry_count <= self.max_retries:
             try:
-                if proxy:
-                    if not proxy.startswith(('http://', 'https://')):
-                        proxy_url = f"http://{proxy}"
-                    else:
-                        proxy_url = proxy
-                    async with self.session.get(url, proxy=proxy_url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                        if response.status in self.retry_status_codes:
-                            if response.status == 429:  # Rate limit
-                                retry_after = int(response.headers.get('Retry-After', delay))
-                                logger.warning(f"Rate limited. Waiting {retry_after} seconds")
-                                await asyncio.sleep(retry_after)
-                                retry_count += 1
-                                continue
-                            raise aiohttp.ClientResponseError(
-                                response.request_info,
-                                response.history,
-                                status=response.status
-                            )
-                        response.raise_for_status()
-                        return await response.text()
-                else:
-                    async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                        if response.status in self.retry_status_codes:
-                            if response.status == 429:  # Rate limit
-                                retry_after = int(response.headers.get('Retry-After', delay))
-                                logger.warning(f"Rate limited. Waiting {retry_after} seconds")
-                                await asyncio.sleep(retry_after)
-                                retry_count += 1
-                                continue
-                            raise aiohttp.ClientResponseError(
-                                response.request_info,
-                                response.history,
-                                status=response.status
-                            )
-                        response.raise_for_status()
-                        return await response.text()
-            except aiohttp.ClientResponseError as e:
+                async with self.session.get(
+                    url,
+                    proxy=self.current_proxy
+                ) as response:
+                    if response.status in self.retry_status_codes:
+                        if response.status == 429:  # Rate limit
+                            retry_after = int(response.headers.get('Retry-After', delay))
+                            logger.warning(f"Rate limited. Waiting {retry_after} seconds")
+                            await asyncio.sleep(retry_after)
+                            retry_count += 1
+                            continue
+                        raise aiohttp.ClientResponseError(
+                            response.request_info,
+                            response.history,
+                            status=response.status
+                        )
+                    response.raise_for_status()
+                    return await response.text()
+            except (aiohttp.ClientConnectorError, 
+                   aiohttp.ServerDisconnectedError) as e:
                 retry_count += 1
                 if retry_count > self.max_retries:
-                    logger.error(f"Failed to fetch {url} after {self.max_retries} retries. Status: {e.status}")
+                    logger.error(
+                        f"Connection error fetching {url} after "
+                        f"{self.max_retries} retries: {str(e)}"
+                    )
                     return None
-                
-                # Exponential backoff with jitter
                 jitter = random.uniform(0, 0.1 * delay)
                 sleep_time = delay + jitter
-                logger.warning(f"Retry {retry_count}/{self.max_retries} for {url} after {sleep_time:.2f}s. Status: {e.status}")
+                logger.warning(
+                    f"Connection error. Retry {retry_count}/{self.max_retries} "
+                    f"for {url} after {sleep_time:.2f}s. Error: {str(e)}"
+                )
+                await asyncio.sleep(sleep_time)
+                delay *= 2  # Exponential backoff
+            except aiohttp.ClientResponseError as e:
+                if e.status not in self.retry_status_codes:
+                    logger.error(f"Non-retryable error fetching {url}: {e.status}")
+                    return None
+                retry_count += 1
+                if retry_count > self.max_retries:
+                    logger.error(
+                        f"Failed to fetch {url} after {self.max_retries} "
+                        f"retries. Status: {e.status}"
+                    )
+                    return None
+                jitter = random.uniform(0, 0.1 * delay)
+                sleep_time = delay + jitter
+                logger.warning(
+                    f"Retry {retry_count}/{self.max_retries} for {url} "
+                    f"after {sleep_time:.2f}s. Status: {e.status}"
+                )
                 await asyncio.sleep(sleep_time)
                 delay *= 2  # Exponential backoff
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 retry_count += 1
                 if retry_count > self.max_retries:
-                    logger.error(f"Failed to fetch {url} after {self.max_retries} retries: {str(e)}")
+                    logger.error(
+                        f"Failed to fetch {url} after {self.max_retries} "
+                        f"retries: {str(e)}"
+                    )
                     return None
-                
-                # Exponential backoff with jitter
                 jitter = random.uniform(0, 0.1 * delay)
                 sleep_time = delay + jitter
-                logger.warning(f"Retry {retry_count}/{self.max_retries} for {url} after {sleep_time:.2f}s. Error: {str(e)}")
+                logger.warning(
+                    f"Retry {retry_count}/{self.max_retries} for {url} "
+                    f"after {sleep_time:.2f}s. Error: {str(e)}"
+                )
                 await asyncio.sleep(sleep_time)
                 delay *= 2  # Exponential backoff
             except Exception as e:
                 logger.error(f"Unexpected error fetching {url}: {str(e)}")
                 return None
-    
+
     async def _fetch_page(self, url: str) -> Optional[str]:
         """
         Fetch page content with proxy support and error handling.
-        Will try different proxies if one fails.
+        Uses the single selected proxy for all requests.
         
         Args:
             url (str): URL to fetch
-            
         Returns:
-            Optional[str]: HTML content or None if all proxies fail
+            Optional[str]: HTML content or None if fetch fails
         """
         if not self.session:
             self.session = aiohttp.ClientSession(headers=self.headers)
-        
-        # Create a copy of proxies to try
-        proxies_to_try = self.proxies.copy() if self.proxies else []
-        
-        # If no proxies available, try direct connection with retry
-        if not proxies_to_try:
-            return await self._fetch_with_retry(url)
-
-        # Try each proxy until one works
-        for proxy in proxies_to_try:
-            content = await self._fetch_with_retry(url, proxy)
-            if content is not None:
-                return content
-            logger.error(f"Failed to fetch {url} with proxy {proxy}")
-
-        logger.error("All proxies failed to fetch the page")
-        return None
+        return await self._fetch_with_retry(url)
 
     async def _get_repo_details(self, repo_url: str) -> Dict[str, Any]:
         """
@@ -194,12 +234,17 @@ class GitHubCrawler:
             }
         }
         
-        # Get owner from the repository header
-        owner_element = soup.select_one('span[itemprop="author"]')
+        # Get owner from the repository header - try multiple selectors
+        owner_element = (
+            soup.select_one('span[itemprop="author"]') or
+            soup.select_one('a[data-hovercard-type="user"]') or
+            soup.select_one('a[data-hovercard-type="organization"]')
+        )
         if owner_element:
             repo_info["extra"]["owner"] = owner_element.text.strip()
             
-        # Get language statistics
+        # Get language statistics - try multiple approaches
+        # First try the language box
         lang_box = soup.find("h2", string=re.compile(r"\bLanguages\b", re.I))
         if isinstance(lang_box, Tag):
             ul = lang_box.find_next("ul")
@@ -214,6 +259,20 @@ class GitHubCrawler:
                             repo_info["extra"]["language_stats"][lang.text.strip()] = float(pct.text.strip("%"))
                         except ValueError:
                             pass
+        
+        # If no languages found, try the language bar
+        if not repo_info["extra"]["language_stats"]:
+            lang_items = soup.select('li[class*="language"]')
+            for item in lang_items:
+                if not isinstance(item, Tag):
+                    continue
+                lang = item.find("span", attrs={"class": "text-bold"})
+                pct = lang.find_next("span") if isinstance(lang, Tag) else None
+                if isinstance(lang, Tag) and isinstance(pct, Tag):
+                    try:
+                        repo_info["extra"]["language_stats"][lang.text.strip()] = float(pct.text.strip("%"))
+                    except ValueError:
+                        pass
                             
         return repo_info
     
@@ -263,9 +322,18 @@ class GitHubCrawler:
             return []
             
         if search_type == "Repositories":
+            # Get all repository URLs from the search results
             repo_urls = self._parse_search_results(content)
-            # Fetch details for each repository concurrently
-            tasks = [self._get_repo_details(url) for url in repo_urls]
+            if not repo_urls:
+                return []
+                
+            # Create tasks for fetching details of all repositories
+            tasks = []
+            for url in repo_urls:
+                task = self._get_repo_details(url)
+                tasks.append(task)
+            
+            # Execute all tasks concurrently and gather results
             results = await asyncio.gather(*tasks)
             return results
         else:
