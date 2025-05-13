@@ -1,8 +1,5 @@
 [
   {
-    "url": "https://github.com/altai/nova-billing/issues/1"
-  },
-  {
     "url": "https://github.com/sfPPP/openstack-note/issues/8"
   },
   {
@@ -21,12 +18,15 @@
     "url": "https://github.com/MOB-atheist/horrible-icons/issues/2"
   },
   {
-    "url": "https://github.com/vitalets/github-trending-repos/issues/6"
-  },
-  {
     "url": "https://github.com/xx-sec/xx-sec/issues/5"
   },
   {
     "url": "https://github.com/YumaInaura/YumaInaura/issues/1322"
+  },
+  {
+    "url": "https://github.com/ruanyf/weekly/issues/983"
+  },
+  {
+    "url": "https://github.com/urllib3/urllib3/issues/497"
   }
 ]

@@ -315,7 +315,10 @@ class GitHubCrawler:
             raise ValueError("search_type must be one of: Repositories, Issues, Wikis")
         
         keywords_q = "+".join(keywords)
-        search_url = f"{self.base_url}/search?q={keywords_q}&type={search_type.lower()}"
+        search_url = self._build_url(
+            "search",
+            {"q": keywords_q, "type": search_type.lower()}
+        )
         content = await self._fetch_page(search_url)
         
         if not content:
